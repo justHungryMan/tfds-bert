@@ -22,7 +22,7 @@ Wikiepedia_en + bookcorpus from huggingface
 """
 _TOKENIZER_JSON_PATH = './tokenizer.json'
 _VOCAB_SIZE = 30_522
-_DUPE_FACOTR = 1
+_DUPE_FACOTR = 8
 _MAX_SEQUENCE_LENGTH = 128
 _MAX_PREDICTIONS_PER_SEQ = 20
 _MASKED_LM_PROB = 0.15
@@ -61,19 +61,17 @@ class BertBeamDataset(tfds.core.GeneratorBasedBuilder):
         import datasets
         import tokenizers
         
-        bookcorpus_dataset = datasets.load_dataset(
-            'bookcorpus'
+        bookcorpus_dataset = datasets.load_dataset('bookcorpus')
+
+        wiki_dataset = datasets.load_dataset(
+            'wikipedia', '20200501.en'
         )
+        wiki_dataset = wiki_dataset.remove_columns("title")
 
-        # wiki_dataset = datasets.load_dataset(
-        #     'wikipedia', '20200501.en'
-        # )
-        # wiki_dataset = wiki_dataset.remove_columns("title")
-
-        # assert bookcorpus_dataset['train'].features.type == wiki_dataset['train'].features.type
+        assert bookcorpus_dataset['train'].features.type == wiki_dataset['train'].features.type
         bert_dataset = bookcorpus_dataset['train']
-        bert_dataset = bert_dataset[:204800]
-        # bert_dataset = datasets.concatenate_datasets([bookcorpus_dataset['train'], wiki_dataset['train']])
+        bert_dataset = datasets.concatenate_datasets([bookcorpus_dataset['train'], wiki_dataset['train']])
+        # bert_dataset = bert_dataset[:204800]
 
         if not os.path.isfile(_TOKENIZER_JSON_PATH):
             print(f"Can not find pretrained tokenizer.")
@@ -120,12 +118,11 @@ class BertBeamDataset(tfds.core.GeneratorBasedBuilder):
             ]
         )
 
-        print(f"Duplicate dataset: {len(bert_dataset) * _DUPE_FACOTR}")
+        print(f"Duplicate dataset: {len(bert_dataset['text']) * _DUPE_FACOTR}")
         # bert_dataset = datasets.concatenate_datasets([bert_dataset] * _DUPE_FACOTR)
-
-        print(f"Generate..")
+        print(f"Generate...")
         return {
-            'train': self._generate_examples(ds=bert_dataset, tokenizer=tokenizer),
+            'train': self._generate_examples(ds=bert_dataset['text'], tokenizer=tokenizer),
             # 'validation': self._generate_examples(paths=data['validation'], synsets=synsets)
         }
 
@@ -133,10 +130,22 @@ class BertBeamDataset(tfds.core.GeneratorBasedBuilder):
         random.seed(22)
 
         max_len = len(ds)
+        data_zip = []
+        for i, data in tqdm(enumerate(ds), total=max_len):
+            text = ds[i]
+            
+            next_sentence_prob = random.random()
+            if next_sentence_prob < 0.5 and i != max_len - 1:
+                next_text = ds[i + 1]
+                next_sentence_labels = 1
+            else:
+                next_text = ds[random.sample(range(max_len), 1)[0]]
+                next_sentence_labels = 0
+            data_zip.append([text, next_text, next_sentence_labels, i])
 
-        def _process_example(ds):
+        def _process_example(data):
             # https://d2l.ai/chapter_natural-language-processing-pretraining/bert-dataset.html
-            def _replace_mlm_tokens(self, tokens, candidate_pred_positions, num_mlm_preds, tokenizer):
+            def _replace_mlm_tokens(tokens, candidate_pred_positions, num_mlm_preds, tokenizer):
                 mlm_input_tokens = [token for token in tokens]
                 pred_positions_and_labels = []
                 random.shuffle(candidate_pred_positions)
@@ -160,15 +169,7 @@ class BertBeamDataset(tfds.core.GeneratorBasedBuilder):
 
                 return mlm_input_tokens, pred_positions_and_labels
 
-            text = ds[i]['text']
-            
-            next_sentence_prob = random.random()
-            if next_sentence_prob < 0.5 and i != max_len - 1:
-                next_text = ds[i + 1]['text']
-                next_sentence_labels = 1
-            else:
-                next_text = ds[random.sample(range(max_len), 1)[0]]['text']
-                next_sentence_labels = 0
+            text, next_text, next_sentence_labels, idx = data
 
             tokenized_text = tokenizer.encode(text, next_text)
 
@@ -179,7 +180,7 @@ class BertBeamDataset(tfds.core.GeneratorBasedBuilder):
 
             # mlm_tokens
             candidate_pred_positions = [i for i, x in enumerate(tokenized_text.special_tokens_mask) if x == 0]
-            mlm_input_tokens, pred_positions_and_labels = self._replace_mlm_tokens(
+            mlm_input_tokens, pred_positions_and_labels = _replace_mlm_tokens(
                 tokens=input_ids,
                 candidate_pred_positions=candidate_pred_positions,
                 num_mlm_preds=min(max(1, round(len(candidate_pred_positions) * 0.15)), _MAX_PREDICTIONS_PER_SEQ),
@@ -204,80 +205,14 @@ class BertBeamDataset(tfds.core.GeneratorBasedBuilder):
                 'masked_lm_weights': mlm_weights,
                 'next_sentence_labels': [next_sentence_labels]
             }
-            return text, record
+            return str(idx).zfill(max_len), record
 
         beam = tfds.core.lazy_imports.apache_beam
         return (
-            beam.Create(ds) 
+            beam.Create(data_zip) 
             | beam.Map(_process_example)
         )
-        # for i, data in tqdm(enumerate(ds), total=max_len):
-        #     text = ds[i]['text']
-            
-        #     next_sentence_prob = random.random()
-        #     if next_sentence_prob < 0.5 and i != max_len - 1:
-        #         next_text = ds[i + 1]['text']
-        #         next_sentence_labels = 1
-        #     else:
-        #         next_text = ds[random.sample(range(max_len), 1)[0]]['text']
-        #         next_sentence_labels = 0
-
-        #     tokenized_text = tokenizer.encode(text, next_text)
-
-
-        #     input_ids = tokenized_text.ids
-        #     input_mask = tokenized_text.attention_mask
-        #     segment_ids = tokenized_text.type_ids
-
-        #     # mlm_tokens
-        #     candidate_pred_positions = [i for i, x in enumerate(tokenized_text.special_tokens_mask) if x == 0]
-        #     mlm_input_tokens, pred_positions_and_labels = self._replace_mlm_tokens(
-        #         tokens=input_ids,
-        #         candidate_pred_positions=candidate_pred_positions,
-        #         num_mlm_preds=min(max(1, round(len(candidate_pred_positions) * 0.15)), _MAX_PREDICTIONS_PER_SEQ),
-        #         tokenizer=tokenizer,
-        #     )
-        #     pred_positions_and_labels = sorted(pred_positions_and_labels, key=lambda x: x[0])
-        #     mlm_pred_positions = [v[0] for v in pred_positions_and_labels]
-        #     mlm_pred_labels = [v[1] for v in pred_positions_and_labels]
-        #     mlm_weights = [1.0] * len(mlm_pred_labels)
-            
-        #     while len(mlm_pred_positions) < _MAX_PREDICTIONS_PER_SEQ:
-        #         mlm_pred_positions.append(0)
-        #         # id of [PAD] 
-        #         mlm_pred_labels.append(3)
-        #         mlm_weights.append(0.0)
-        #     # print('mlm_input_tokens: ', mlm_input_tokens)
-        #     # print('pred_positions_and_labels: ', pred_positions_and_labels)
-
-        #     # print('mlm_pred_positions', mlm_pred_positions)
-        #     # print('mlm_pred_labels', mlm_pred_labels)
-        #     # print('mlm_weights:', mlm_weights)
-
-        #     # print('--')
-        #     # print(len(input_ids))
-
-        #     # print(text)
-        #     # print(tokenized_text.tokens)
-        #     # print('token_id    :', input_ids)
-        #     # print('input_mask  :', input_mask)
-        #     # print('segment_ids :', segment_ids)
-        #     # print('sepcial_mask:', tokenized_text.special_tokens_mask)
-
-        #     try:
-        #         record = {
-        #             'input_ids': input_ids,
-        #             'input_mask': input_mask,
-        #             'segment_ids': segment_ids,
-        #             'masked_lm_positions': mlm_pred_positions,
-        #             'masked_lm_ids': mlm_pred_labels,
-        #             'masked_lm_weights': mlm_weights,
-        #             'next_sentence_labels': [next_sentence_labels]
-        #         }
-
-        #         yield text, record
-        #     except Exception as e:
-        #         continue
+      
 
     
          
@@ -285,8 +220,8 @@ class BertBeamDataset(tfds.core.GeneratorBasedBuilder):
         
 
 
-# if __name__ == '__main__':
-#     # test = Bert()
+if __name__ == '__main__':
+    test = BertBeamDataset()
 #     tfds.enable_progress_bar()
 
 #     # if not os.path.exists('gs://justhungryman/tfds'):
