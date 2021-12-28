@@ -22,7 +22,7 @@ Wikiepedia_en + bookcorpus from huggingface
 """
 _TOKENIZER_JSON_PATH = './tokenizer.json'
 _VOCAB_SIZE = 30_522
-_DUPE_FACOTR = 8
+_DUPE_FACOTR = 1
 _MAX_SEQUENCE_LENGTH = 128
 _MAX_PREDICTIONS_PER_SEQ = 20
 _MASKED_LM_PROB = 0.15
