@@ -119,8 +119,9 @@ class BertBeamDataset(tfds.core.GeneratorBasedBuilder):
         )
 
         print(f"Duplicate dataset: {len(bert_dataset['text']) * _DUPE_FACOTR}")
-        # bert_dataset = datasets.concatenate_datasets([bert_dataset] * _DUPE_FACOTR)
+        bert_dataset = datasets.concatenate_datasets([bert_dataset] * _DUPE_FACOTR)
         print(f"Generate...")
+
         return {
             'train': self._generate_examples(ds=bert_dataset['text'], tokenizer=tokenizer),
             # 'validation': self._generate_examples(paths=data['validation'], synsets=synsets)
@@ -211,33 +212,20 @@ class BertBeamDataset(tfds.core.GeneratorBasedBuilder):
         return (
             beam.Create(data_zip) 
             | beam.Map(_process_example)
+            | beam.Reshuffle()
         )
       
 
-    
-         
-
-        
-
-
 if __name__ == '__main__':
     test = BertBeamDataset()
-#     tfds.enable_progress_bar()
 
-#     # if not os.path.exists('gs://justhungryman/tfds'):
-#     #     os.makedirs('./data')
-#     flags = ['--runner=DataflowRunner', '--project=justhungryman', '--job_name=bert-gen', '--staging_location=gs://justhungryman/binaries', '--temp_location=gs://justhungryman/temp', 'requirements_file=/tmp/beam_requirements.txt']
-#     beam = tfds.core.lazy_imports.apache_beam
-#     dl_config = tfds.download.DownloadConfig(
-#         beam_options=beam.options.pipeline_options.PipelineOptions(flags=flags, pipeline_type_check=False)
-#     )
+    builder = tfds.builder('bert_beam_dataset', data_dir='~/tensorflow_datasets', try_gcs=False)
+    ds = builder.as_dataset(split='train')
 
-#     builder = tfds.builder('jun', data_dir='gs://justhungryman/tfds', try_gcs=False)
-#     builder.download_and_prepare(
-#         download_dir='gs://justhungryman/tfds',
-#         download_config=dl_config
-#     )
-#     ds = builder.as_dataset(split='train')
-#     print(builder.info)
-#     print(builder.info.splits['train'].num_examples)
+    print(builder.info)
+    print(builder.info.splits['train'].num_examples)
+
+    for data in ds:
+        print(data)
+        break
 
